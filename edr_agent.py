@@ -11,6 +11,11 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import psutil
 import shutil
+import pyfiglet
+from colorama import init, Fore, Back, Style
+
+# Initialize Colorama for Windows
+init(autoreset=True)
 
 try:
     import pefile
@@ -35,15 +40,34 @@ MODEL_PATH = os.path.join(os.path.dirname(__file__), 'Model', 'ransomware_detect
 
 os.makedirs(MONITORED_DIR, exist_ok=True)
 os.makedirs(LOGS_DIR, exist_ok=True)
+IS_SELF_MODIFYING = False
 REPORTS_DIR = "forensic_reports"
 os.makedirs(REPORTS_DIR, exist_ok=True)
 
-def log_event(message):
+def log_event(message, is_banner=False, is_safe=False):
     timestamp = time.strftime("[%Y-%m-%d %H:%M:%S]")
-    formatted_msg = f"{timestamp} {message}"
-    print(formatted_msg)
+    
+    # Highlighting Logic
+    color = ""
+    if "[!]" in message: color = Fore.RED + Style.BRIGHT
+    elif "[!!!]" in message: color = Back.RED + Fore.WHITE + Style.BRIGHT
+    elif "[+]" in message: color = Fore.GREEN + Style.BRIGHT
+    elif "[*]" in message: color = Fore.CYAN
+    
+    if is_banner:
+        banner_text = "THREAT DETECTED" if not is_safe else "FILE SECURE"
+        banner_color = Fore.RED if not is_safe else Fore.GREEN
+        banner = pyfiglet.figlet_format(banner_text, font="small")
+        print("\n" + banner_color + Style.BRIGHT + "=" * 60)
+        print(banner_color + Style.BRIGHT + banner)
+        print(banner_color + Style.BRIGHT + " " + message)
+        print(banner_color + Style.BRIGHT + "=" * 60 + "\n")
+    else:
+        formatted_msg = f"{timestamp} {message}"
+        print(color + formatted_msg)
+    
     with open(EDR_LOG_FILE, "a") as f:
-        f.write(formatted_msg + "\n")
+        f.write(f"{timestamp} {message}\n")
 
 # Load XGBoost Model
 print("[*] Loading XGBoost AI Model...")
@@ -271,6 +295,10 @@ def capture_process_memory(pid=None):
     except Exception as e:
         return {'error': str(e)}
 
+# ══════════════════════════════════════════════════════════════════
+#  ADVANCED NETWORK FORENSICS MODULE
+# ══════════════════════════════════════════════════════════════════
+
 def run_nids_trace():
     """Network Intrusion Detection System - Scans active network connections and geolocates external IPs."""
     log_event("[*] NIDS: Initiating Network Intrusion Trace...")
@@ -480,7 +508,8 @@ class RansomwareAgentHandler(FileSystemEventHandler):
         # 0. Cryptographic Whitelist Check
         file_hash = calculate_sha256(filepath)
         if file_hash in KNOWN_GOOD_HASHES:
-            log_event(f"[+] Cleared by Cryptographic Whitelist: '{clean_name}'. File is a mathematically verified trusted installer.")
+            msg = f"Cleared by Cryptographic Whitelist: '{clean_name}'. File is a mathematically verified trusted installer."
+            log_event(msg, is_banner=True, is_safe=True)
             return
         
         # 1. XGBoost Pipeline for Executables (and extension-less Payloads)
@@ -491,14 +520,15 @@ class RansomwareAgentHandler(FileSystemEventHandler):
                 prob = xgb_model.predict_proba(features)[0]
                 
                 if prediction == 1: # Ransomware
-                    log_event(f"[!] XDR ALERT: XGBoost detected '{filename}' as Ransomware ({prob[1]*100:.2f}%)")
+                    alert_msg = f"XDR ALERT: XGBoost detected '{filename}' as Ransomware ({prob[1]*100:.2f}%)"
+                    log_event(alert_msg, is_banner=(prob[1] > 0.8)) # Multi-line banner for high confidence
                     q_path = quarantine_file(filepath)
                     nids_data = run_nids_trace()
                     # Pass quarantined path for PE analysis, original path for MotW
                     analysis_path = q_path if q_path else filepath
                     save_forensic_report(filename, file_hash, prob[1]*100, nids_data, analysis_path)
                 else:
-                    log_event(f"[+] XGBoost cleared '{filename}'. File is safe.")
+                    log_event(f"XGBoost cleared '{filename}'. File is safe.", is_banner=True, is_safe=True)
         
         # 2. Ollama Pipeline for Scripts
         elif filename.endswith(('.bat', '.ps1', '.py', '.vbs')):
@@ -513,14 +543,16 @@ class RansomwareAgentHandler(FileSystemEventHandler):
                 log_event(f"[+] Ollama cleared '{filename}'. Script is safe.")
 
     def on_modified(self, event):
-        global LAST_TRIP_TIME
+        global LAST_TRIP_TIME, IS_SELF_MODIFYING
         if event.is_directory: return
+        if IS_SELF_MODIFYING: return # Ignore our own edits
+        
         filepath = event.src_path
         
-        # 3. Canary Trap Failsafe (with debounce to prevent infinite loop)
+        # 3. Canary Trap Failsafe (with debounce)
         if "trap_canary" in os.path.basename(filepath) and not filepath.endswith('.quarantined'):
             current_time = time.time()
-            if current_time - LAST_TRIP_TIME > 5: # 5 second cooldown
+            if current_time - LAST_TRIP_TIME > 5:
                 LAST_TRIP_TIME = current_time
                 trigger_process_kill(filepath)
                 run_nids_trace()
@@ -530,13 +562,17 @@ class RansomwareAgentHandler(FileSystemEventHandler):
                 create_canary()
 
 def create_canary():
+    global IS_SELF_MODIFYING
     trap_path = os.path.join(MONITORED_DIR, "trap_canary_passwords.txt")
     try:
+        IS_SELF_MODIFYING = True
         with open(trap_path, 'w') as f:
             f.write("Do not modify this file. It is a honeypot for ransomware detection.")
+        time.sleep(0.5) # Wait for filesystem to settle
+        IS_SELF_MODIFYING = False
     except Exception as e:
         log_event(f"[-] Could not recreate canary immediately: {e}")
-    # In Windows you can use os.system(f"attrib +h {trap_path}") to hide it, but we'll leave it visible for testing.
+        IS_SELF_MODIFYING = False
 
 if __name__ == "__main__":
     print("========================================")
