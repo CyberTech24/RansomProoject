@@ -1,0 +1,38 @@
+============================================
+  RansomGuard - Web App Guide
+  Steps to Run the Application
+============================================
+
+STEP 1: Start the Backend Server
+---------------------------------
+  Open a terminal and run:
+
+    cd c:\Users\modey\Documents\RansomwareProject
+    python app.py
+
+  Backend will start at: http://localhost:5000
+
+
+STEP 2: Start the Frontend Server
+-----------------------------------
+  Open a second terminal and run:
+
+    cd c:\Users\modey\Documents\RansomwareProject\frontend
+    npm start
+
+  Frontend will open at: http://localhost:3000
+
+
+STEP 3: Use the Web App
+-------------------------
+  1. Open http://localhost:3000 in your browser
+  2. Upload a file using "Choose file" or drag & drop
+  3. Click "Scan File"
+  4. View the scan results
+  5. Click "Scan another file" to scan more files
+  6. Use the moon/sun icon (top-right) to toggle dark/light mode
+
+
+NOTE: Both servers (Step 1 and Step 2) must be running at the same time.
+
+============================================
